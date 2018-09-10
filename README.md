@@ -1,12 +1,10 @@
 # ez_scanpy
 A useful class of functions for processing single-cell RNA sequencing data using scanpy in python
-# Simple analysis script to demonstrate proper code syntax
+
 import ez_scanpy as ezsc
 
 
-###################################################
-# Remove doublets and create initial .h5ad object #
-###################################################
+# Remove doublets and create initial .h5ad object
 h5csvpath = './v2.batches.h5.csv'
 no_norm = './SLEcrossX_nonorm.h5ad'
 #ezsc.remove_doublets(h5csvpath, no_norm)
