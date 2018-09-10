@@ -1,4 +1,4 @@
-# A useful class of functions for processing single-cell RNA sequencing data using scanpy in python
+# A useful class of functions for processing single-cell RNA sequencing data using scanpy
 
 import ez_scanpy as ezsc
 
