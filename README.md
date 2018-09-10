@@ -3,6 +3,7 @@
 import ez_scanpy as ezsc
 
 #Remove doublets and create initial .h5ad object
+
 h5csvpath = './v2.batches.h5.csv'
 no_norm = './SLEcrossX_nonorm.h5ad'
 ezsc.remove_doublets(h5csvpath, no_norm)
@@ -10,23 +11,28 @@ ezsc.remove_doublets(h5csvpath, no_norm)
 
 
 #Basic processing and remove platelets
+
 processed = './SLEcrossX_processed.h5ad'
 ezsc.basicprocessing_noplatelets(no_norm, processed)
 
 
 
 #Basic processing and without removing platelets
+
 processed_plat = './SLEcrossX_processed_with_platelets.h5ad'
 ezsc.basic_processing(no_norm, processed_plat)
 
 
 #Basic analysis
+
 ezsc.basic_analysis(processed)
 ezsc.basic_analysis(processed_plat)
 
 
 #Assign cell identity
+
 #Must run 'Basic analysis' first
+
 #Gene markers for cell type populations
 
 annotation = {'CD8+ T': ['CD8A', 'CD8B', 'CD3D'], 'CD4+ T': ['CD3D', 'ANK3', 'IL7R'],
@@ -39,7 +45,9 @@ ezsc.cell_identity(processed, annotation)
 
 
 #Subpopulation analysis
+
 #Must run basic analysis first 
+
 Mpath = './Mono.h5ad'
 Bpath = './Bcell.h5ad'
 T4path = './T4cell.h5ad'
