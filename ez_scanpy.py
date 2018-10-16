@@ -35,7 +35,7 @@ def remove_doublets(h5csvpath, savepath):
     logging.info(str('Data structure details: ' + str(adata_singlet)))
     clf = doubletdetection.BoostClassifier()
     # raw_counts is a cells by genes count matrix
-    labels = clf.fit(adata_singlet.X).predict(voter_thresh=0.70)
+    labels = clf.fit(adata_singlet.X).predict(voter_thresh=0.50)
     f2, tsne_coords, clusters = doubletdetection.plot.tsne(adata_singlet.X, labels, random_state=1, save='tsne_test.pdf', show=False)
     f3 = doubletdetection.plot.threshold(clf, save='threshold_test.pdf', show=False, p_step=6)
     logging.info(str(labels))
@@ -68,7 +68,7 @@ def remove_doublets(h5csvpath, savepath):
         logging.info(str('Data structure details: ' + str(bdata_singlet)))
         clf = doubletdetection.BoostClassifier()
         # raw_counts is a cells by genes count matrix
-        labels = clf.fit(bdata_singlet.X).predict(voter_thresh=0.70)
+        labels = clf.fit(bdata_singlet.X).predict(voter_thresh=0.50)
         f2, tsne_coords, clusters = doubletdetection.plot.tsne(bdata_singlet.X, labels, random_state=1, save=str(str(i) + 'b_tsne_test.pdf'), show=False)
 
         logging.info(str(labels))
@@ -121,7 +121,7 @@ def remove_doublets_flare(flarepaths, flaregps, bestfilepath, savepath):
                 singlets_ind.append(best['BEST'].values[jj])
 
         if ii == 0:
-            adata = sc.read_10x_h5(flarepaths[ii])
+            adata = sc.read_10x_h5(flarepaths[ii], 'hg19')
             adata = adata[adata.obs_names.isin(singlets_bc)]
             logging.info(str(adata))
             singlets_bc = pd.Series(singlets_bc)
@@ -135,7 +135,7 @@ def remove_doublets_flare(flarepaths, flaregps, bestfilepath, savepath):
             # Independent Doublet Detection
             clf = doubletdetection.BoostClassifier()
             # raw_counts is a cells by genes count matrix
-            labels = clf.fit(adata.X).predict(voter_thresh=0.70)
+            labels = clf.fit(adata.X).predict(voter_thresh=0.50)
             f2, tsne_coords, clusters = doubletdetection.plot.tsne(adata.X, labels, random_state=1,
                                                                    save='tsne_test.pdf', show=False)
             logging.info(str(labels))
@@ -151,7 +151,7 @@ def remove_doublets_flare(flarepaths, flaregps, bestfilepath, savepath):
             f = doubletdetection.plot.convergence(clf, save='convergence_test.pdf', show=False)
 
         else:
-            bdata = sc.read_10x_h5(flarepaths[ii])
+            bdata = sc.read_10x_h5(flarepaths[ii], 'hg19')
             bdata = bdata[bdata.obs_names.isin(singlets_bc)]
             logging.info(str(bdata))
             singlets_bc = pd.Series(singlets_bc)
@@ -163,7 +163,7 @@ def remove_doublets_flare(flarepaths, flaregps, bestfilepath, savepath):
             # Independent Doublet Detection
             clf = doubletdetection.BoostClassifier()
             # raw_counts is a cells by genes count matrix
-            labels = clf.fit(bdata.X).predict(voter_thresh=0.70)
+            labels = clf.fit(bdata.X).predict(voter_thresh=0.50)
             f2, tsne_coords, clusters = doubletdetection.plot.tsne(bdata.X, labels, random_state=1,
                                                                    save=str(str(ii) + 'b_tsne_test.pdf'), show=False)
             logging.info(str(labels))
@@ -200,6 +200,146 @@ def remove_doublets_flare(flarepaths, flaregps, bestfilepath, savepath):
     adata.write(savepath)
     adata.write_csvs(savepath.split('.')[0])
 
+
+def remove_doublets_cml(flarepaths, flaregps, bestfilepath, savepath):
+    import numpy as np
+    import pandas as pd
+    import scanpy.api as sc
+    import logging
+    import doubletdetection
+
+    ##################
+    # Configure file #
+    ##################
+    sc.settings.verbosity = 2
+    sc.settings.autoshow = False
+    logging.basicConfig(level=logging.INFO)
+
+
+    ############################
+    # Compile demuxlet results #
+    ############################
+    for ii in range(len(flarepaths)):
+        best = pd.read_csv(bestfilepath[ii], delimiter='\t')
+        singlets_ind = []
+        singlets_bc = []
+        for jj in range(len(best['BEST'].values)):
+            if 'SNG' in best['BEST'].values[jj]:
+                singlets_bc.append(best['BARCODE'].values[jj])
+                singlets_ind.append(best['BEST'].values[jj])
+
+        if ii == 0:
+            adata = sc.read_10x_h5(flarepaths[ii], 'hg19')
+            adata = adata[adata.obs_names.isin(singlets_bc)]
+            logging.info(str(adata))
+            singlets_bc = pd.Series(singlets_bc)
+            singlets_ind = pd.Series(singlets_ind)
+            logging.info(str(singlets_bc.isin(adata.obs_names.tolist()).values))
+            singlets_ind = singlets_ind[singlets_bc.isin(adata.obs_names.tolist()).values]
+            adata.obs['ind_cov'] = singlets_ind.values
+            adata.obs['batch_cov'] = np.repeat(flaregps[ii], len(adata.obs_names))
+            logging.info(str('Adata.X: ' + str(np.shape(adata.X))))
+            '''
+            # Independent Doublet Detection
+            clf = doubletdetection.BoostClassifier()
+            # raw_counts is a cells by genes count matrix
+            labels = clf.fit(adata.X).predict(voter_thresh=0.50)
+            f2, tsne_coords, clusters = doubletdetection.plot.tsne(adata.X, labels, random_state=1,
+                                                                   save='tsne_test.pdf', show=False)
+            logging.info(str(labels))
+            nan_index = np.isnan(labels)
+            labels[nan_index] = 1
+            logging.info(str('Number of Doublets: ' + str(np.sum(labels))))
+            labels = labels - 1
+            logging.info(str(labels))
+            labels = np.abs(labels) > 0
+            logging.info(str(labels))
+            adata = adata[labels]
+            logging.info(str('Data structure details: ' + str(adata)))
+            f = doubletdetection.plot.convergence(clf, save='convergence_test.pdf', show=False)
+            '''
+        else:
+            bdata = sc.read_10x_h5(flarepaths[ii], 'hg19')
+            bdata = bdata[bdata.obs_names.isin(singlets_bc)]
+            logging.info(str(bdata))
+            singlets_bc = pd.Series(singlets_bc)
+            singlets_ind = pd.Series(singlets_ind)
+            singlets_ind = singlets_ind[singlets_bc.isin(bdata.obs_names.tolist()).values]
+            bdata.obs['ind_cov'] = singlets_ind.values
+            bdata.obs['batch_cov'] = np.repeat(flaregps[ii], len(bdata.obs_names))
+            '''
+            # Independent Doublet Detection
+            clf = doubletdetection.BoostClassifier()
+            # raw_counts is a cells by genes count matrix
+            labels = clf.fit(bdata.X).predict(voter_thresh=0.50)
+            f2, tsne_coords, clusters = doubletdetection.plot.tsne(bdata.X, labels, random_state=1,
+                                                                   save=str(str(ii) + 'b_tsne_test.pdf'), show=False)
+            logging.info(str(labels))
+            nan_index = np.isnan(labels)
+            labels[nan_index] = 1
+            logging.info(str('Number of Doublets: ' + str(np.sum(labels))))
+            labels = labels - 1
+            logging.info(str(labels))
+            labels = np.abs(labels) > 0
+            logging.info(str(labels))
+            bdata = bdata[labels]
+            logging.info(str('Data structure details: ' + str(bdata)))
+            f = doubletdetection.plot.convergence(clf, save=str(str(ii) + 'b_convergence_test.pdf'), show=False)
+            '''
+            # Concatenate files.
+            adata = adata.concatenate(bdata)
+            
+    logging.info(str(adata))
+    logging.info('Saving compiled demuxlet results')
+    adata.write(savepath)
+    adata.write_csvs(savepath.split('.')[0])
+
+def combine_studies(crossXpath, flarepath, savepath):
+    import scanpy.api as sc
+    import logging
+    adatacrossX = sc.read(crossXpath)
+    adatacrossX.obs['study_cov'] = adatacrossX.obs['batch_cov'].astype('object')
+    adatacrossX.obs['study_cov'] = 'Cross-Sectional'
+    logging.info(str('CrossX structure details: ' + str(adatacrossX)))
+    adataflare = sc.read(flarepath)
+    adataflare.obs['study_cov'] = adataflare.obs['batch_cov'].astype('object')
+    adataflare.obs['study_cov'] = 'Flare'
+    logging.info(str('Flare structure details: ' + str(adataflare)))
+    adata = adatacrossX.concatenate(adataflare)
+    adata.obs['disease_cov_simple'] = adata.obs['disease_cov'].astype('object')
+    adata.obs['disease_cov_simple'][adata.obs['disease_cov_simple'].isin(['healthy', 'ImmVar', 'UCSF Control', 'UCSF Healthy'])] = 'healthy'
+    adata.obs['disease_cov_simple'][adata.obs['disease_cov_simple'].isin(['sle', 'Treated', 'Treated Pair'])] = 'sle_treated'
+    adata.obs['disease_cov_simple'][adata.obs['disease_cov_simple'].isin(['Untreated', 'Untreated Pair'])] = 'sle_flaring'
+    logging.info(str('New combined structure details: ' + str(adata)))
+    adata.filename = 'combinedbacked.h5ad'
+    adata.write(savepath)
+
+
+def combine_studies_cml(crossXpath, flarepath, cmlpath, savepath):
+    import scanpy.api as sc
+    import logging
+    adatacrossX = sc.read(crossXpath)
+    adatacrossX.obs['study_cov'] = adatacrossX.obs['batch_cov'].astype('object')
+    adatacrossX.obs['study_cov'] = 'Cross-Sectional SLE'
+    logging.info(str('CrossX structure details: ' + str(adatacrossX)))
+    adataflare = sc.read(flarepath)
+    adataflare.obs['study_cov'] = adataflare.obs['batch_cov'].astype('object')
+    adataflare.obs['study_cov'] = 'Flare SLE'
+    logging.info(str('Flare structure details: ' + str(adataflare)))
+    adata = adatacrossX.concatenate(adataflare)
+    adata.obs['disease_cov_simple'] = adata.obs['disease_cov'].astype('object')
+    adata.obs['disease_cov_simple'][adata.obs['disease_cov_simple'].isin(['healthy', 'ImmVar', 'UCSF Control', 'UCSF Healthy'])] = 'healthy'
+    adata.obs['disease_cov_simple'][adata.obs['disease_cov_simple'].isin(['sle', 'Treated', 'Treated Pair'])] = 'sle_treated'
+    adata.obs['disease_cov_simple'][adata.obs['disease_cov_simple'].isin(['Untreated', 'Untreated Pair'])] = 'sle_flaring'
+    logging.info(str('New combined structure details: ' + str(adata)))
+
+    adatacml = sc.read(cmlpath)
+    adatacml.obs['study_cov'] = adatacml.obs['batch_cov'].astype('object')
+    adatacml.obs['study_cov'] = 'CML'
+    logging.info(str('CML structure details: ' + str(adatacml)))
+    adata = adata.concatenate(adatacml)
+    logging.info(str('New combined structure details: ' + str(adata)))
+    adata.write(savepath)
 
 def basic_processing(filepath, savepath):
     import numpy as np
@@ -268,7 +408,6 @@ def basic_processing(filepath, savepath):
     adata.uns['total_pbmcs'] = total_pbmcs
     logging.info('Saving processed data')
     adata.write(savepath)
-    adata.write_csvs(savepath.split('.')[0])
 
 
 def basicprocessing_noplatelets(filepath, savepath):
@@ -352,7 +491,6 @@ def basicprocessing_noplatelets(filepath, savepath):
     adata.uns['total_pbmcs'] = total_pbmcs
     logging.info('Saving processed data')
     adata.write(savepath)
-    adata.write_csvs(savepath.split('.')[0])
 
 
 def cell_identity(filepath, annotation):
@@ -418,7 +556,7 @@ def basic_analysis(filepath):
     # Set parameters
     intialization = 1
     n_components = 20
-    resolution = 0.5
+    resolution = 1
     # Run louvain clustering on theoretical future gene expression per cell
     logging.info('Estimating louvain cluster identities for gene expression values.')
     sc.pp.pca(adata, random_state=intialization)
@@ -434,13 +572,15 @@ def basic_analysis(filepath):
     logging.info('paga complete.')
     sc.tl.umap(adata, random_state=intialization, init_pos='paga')
     logging.info('UMAP complete.')
+    sc.tl.tsne(adata, n_pcs=10)
+    logging.info('TSNE complete.')
     # First PC for ordering of cells in the umap
     adata.obs['ordering_UMAP'] = sc.pp.pca(adata.obsm['X_umap'], n_comps=1, copy=True)
     logging.info('UMAP ordering complete.')
-    sc.tl.rank_genes_groups(adata, groupby='louvain', method='wilcoxon')
-    logging.info('Processing PHATE')
-    sc.tl.phate(adata, n_pca=10)
-    logging.info('Ranked genes complete.')
+    #sc.tl.rank_genes_groups(adata, groupby='louvain', method='wilcoxon')
+    #logging.info('Processing PHATE')
+    #sc.tl.phate(adata, n_pca=10)
+    #logging.info('Ranked genes complete.')
     adata.write(filepath)
     logging.info('Basic analysis complete.')
 
@@ -486,6 +626,8 @@ def subpopulation_analysis(cell_type_IDs, filepath, no_norm_filepath, savepath):
     adata.obs['ct_cov'] = ct_cov
     logging.info(str('New data structure details: ' + str(adata)))
     bdata = adata[adata.obs['ct_cov'].isin(cell_type_IDs)].copy(savepath)
+    logging.info(str('ct_cov: ' + str(bdata.obs['ct_cov'])))
+    logging.info(str('bdata structure details: ' + str(adata)))
     bdata.write(savepath)
 
     ######################
@@ -526,7 +668,6 @@ def subpopulation_analysis(cell_type_IDs, filepath, no_norm_filepath, savepath):
     adata.write(savepath)
     # Basic analysis
     basic_analysis(savepath)
-    adata.write_csvs(savepath.split('.')[0])
 
 def subpopulation_analysis_regressIFN(cell_type_IDs, filepath, no_norm_filepath, savepath):
     import scanpy.api as sc
@@ -601,7 +742,6 @@ def subpopulation_analysis_regressIFN(cell_type_IDs, filepath, no_norm_filepath,
     logging.info('Basic processing complete.')
     # Basic analysis
     basic_analysis(savepath)
-    adata.write_csvs(savepath.split('.')[0])
 
 def subpopulation_analysis_covariate(cell_type_IDs, covariate, covariate_grp, filepath, no_norm_filepath, savepath):
     import scanpy.api as sc
@@ -675,7 +815,6 @@ def subpopulation_analysis_covariate(cell_type_IDs, covariate, covariate_grp, fi
     adata.write(savepath)
     # Basic analysis
     basic_analysis(savepath)
-    adata.write_csvs(savepath.split('.')[0])
 
 
 def subpopulation_analysis_removeIFNGenes(cell_type_IDs, filepath, no_norm_filepath, savepath):
@@ -756,4 +895,73 @@ def subpopulation_analysis_removeIFNGenes(cell_type_IDs, filepath, no_norm_filep
     adata.write(savepath)
     # Basic analysis
     basic_analysis(savepath)
-    adata.write_csvs(savepath.split('.')[0])
+
+
+def gene_heatmap():
+    import numpy as np
+    import scanpy.api as sc
+    import logging
+    import matplotlib.pyplot as plt
+    import pandas as pd
+    import seaborn as sns
+
+    ####################
+    #  Configure file  #
+    ####################
+    # Configure logging
+    logging.basicConfig(level=logging.INFO)
+    # Configure scanpy settings
+    sc.settings.verbosity = 2
+    sc.settings.autoshow = False
+
+    allcellspath = '/ye/yelabstore2/10x.lupus/process.scRNAseq/Richard/PlottingScripts/ez_scanpy/Mono_flare.h5ad'
+
+    adata = sc.read(allcellspath)
+    logging.info(str('Data structure details: ' + str(adata)))
+    logging.info(str('ct_cov: ' + str(adata.obs['ct_cov'])))
+
+
+    # Remove doublets and platelets contaminated cells
+    adata = adata[adata.obs['louvain'].isin(['0', '1', '2', '3'])]
+    unique_louvain = np.unique(adata.obs['louvain'].values)
+
+    Diff_genes = []
+    n_genes = 50
+    for ii in range(len(unique_louvain)):
+        if ii == 0:
+            Diff_genes = set(
+                adata.var_names[np.flipud(np.argsort(np.mean(adata.X[adata.obs['louvain'] == str(ii)], axis=0)))][
+                :n_genes])
+        else:
+            Diff_genes.update(set(
+                adata.var_names[np.flipud(np.argsort(np.mean(adata.X[adata.obs['louvain'] == str(ii)], axis=0)))][
+                :n_genes]))
+
+    # Diff_genes = adata.var_names.tolist()
+    Diff_genes = list(Diff_genes)
+    logging.info(str(Diff_genes))
+    # Assign each cell to a louvain group
+    # palette = sns.color_palette("husl", len(np.unique(adata.obs['louvain'].tolist())))
+    colors = [adata.uns['louvain_colors'][int(a)] for a in adata.obs['louvain'].tolist()]
+    louvain = pd.Series(colors, index=adata.obs['ordering_UMAP'].tolist())
+
+    # Generate Gene expression plot
+    for Gn in Diff_genes:
+        logging.info(str(Gn))
+        if Gn == Diff_genes[0]:
+            mat = np.reshape(adata.X[:, adata.var_names.isin([Gn])], (-1, 1))
+        else:
+            mat = np.concatenate((mat, np.reshape(adata.X[:, adata.var_names.isin([Gn])], (-1, 1))), axis=1)
+    logging.info(str(np.shape(mat)))
+    clustermat = pd.DataFrame(data=mat, index=adata.obs['ordering_UMAP'].tolist(), columns=Diff_genes)
+    clustermat = clustermat.sort_index(axis=0)
+    clustermat = clustermat.transpose()
+    clustermat = clustermat.rolling(window=int(np.round(len(adata.obs_names.tolist()) * 0.05)), min_periods=1,
+                                    axis=1).mean()
+    min = clustermat.min(axis=1)
+    max = clustermat.max(axis=1)
+    clustermat = clustermat.subtract(min, axis=0)
+    clustermat = clustermat.div(max - min, axis=0)
+    sns.set(font_scale=0.25)
+    sns.clustermap(clustermat, row_cluster=True, col_cluster=False, yticklabels=True, col_colors=louvain)
+    plt.savefig('clustermap.png', dpi=1000)
