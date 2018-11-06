@@ -15,7 +15,6 @@ def remove_doublets(h5csvpath, savepath):
     sc.settings.verbosity = 2
     sc.settings.autoshow = False
     logging.basicConfig(level=logging.INFO)
-
     ###########################################################
     # Compile demuxlet results and remove undetected doublets #
     ###########################################################
@@ -129,7 +128,8 @@ def remove_doublets_flare(flarepaths, flaregps, bestfilepath, savepath):
             logging.info(str(singlets_bc.isin(adata.obs_names.tolist()).values))
             singlets_ind = singlets_ind[singlets_bc.isin(adata.obs_names.tolist()).values]
             adata.obs['ind_cov'] = singlets_ind.values
-            adata.obs['batch_cov'] = np.repeat(flaregps[ii], len(adata.obs_names))
+            adata.obs['well'] = np.repeat(flaregps[ii], len(adata.obs_names))
+            adata.obs['batch_cov'] = np.repeat(flaregps[ii][:-2], len(adata.obs_names))
             logging.info(str('Adata.X: ' + str(np.shape(adata.X))))
 
             # Independent Doublet Detection
@@ -158,7 +158,8 @@ def remove_doublets_flare(flarepaths, flaregps, bestfilepath, savepath):
             singlets_ind = pd.Series(singlets_ind)
             singlets_ind = singlets_ind[singlets_bc.isin(bdata.obs_names.tolist()).values]
             bdata.obs['ind_cov'] = singlets_ind.values
-            bdata.obs['batch_cov'] = np.repeat(flaregps[ii], len(bdata.obs_names))
+            bdata.obs['well'] = np.repeat(flaregps[ii], len(adata.obs_names))
+            bdata.obs['batch_cov'] = np.repeat(flaregps[ii][:-2], len(adata.obs_names))
 
             # Independent Doublet Detection
             clf = doubletdetection.BoostClassifier()
@@ -288,11 +289,102 @@ def remove_doublets_cml(flarepaths, flaregps, bestfilepath, savepath):
             '''
             # Concatenate files.
             adata = adata.concatenate(bdata)
-            
+
     logging.info(str(adata))
     logging.info('Saving compiled demuxlet results')
     adata.write(savepath)
     adata.write_csvs(savepath.split('.')[0])
+
+
+def remove_doublets_immvar(paths, gps, bestfilepath, savepath):
+    import numpy as np
+    import pandas as pd
+    import scanpy.api as sc
+    import logging
+    import doubletdetection
+
+    ##################
+    # Configure file #
+    ##################
+    sc.settings.verbosity = 2
+    sc.settings.autoshow = False
+    logging.basicConfig(level=logging.INFO)
+
+
+    ############################
+    # Compile demuxlet results #
+    ############################
+    for ii in range(len(paths)):
+        best = pd.read_csv(bestfilepath[ii], delimiter='\t')
+        singlets_ind = []
+        singlets_bc = []
+        for jj in range(len(best['BEST'].values)):
+            if 'SNG' in best['BEST'].values[jj]:
+                singlets_bc.append(best['BARCODE'].values[jj])
+                singlets_ind.append(best['BEST'].values[jj].split('-')[1])
+
+        if ii == 0:
+            adata = sc.read_10x_h5(paths[ii], 'hg19')
+            adata = adata[adata.obs_names.isin(singlets_bc)]
+            logging.info(str(adata))
+            singlets_bc = pd.Series(singlets_bc)
+            singlets_ind = pd.Series(singlets_ind)
+            logging.info(str(singlets_bc.isin(adata.obs_names.tolist()).values))
+            singlets_ind = singlets_ind[singlets_bc.isin(adata.obs_names.tolist()).values]
+            adata.obs['ind_cov'] = singlets_ind.values
+            adata.obs['well'] = np.repeat(gps[ii], len(adata.obs_names))
+            adata.obs['batch_cov'] = np.repeat(gps[ii][:-2], len(adata.obs_names))
+            logging.info(str('Adata.X: ' + str(np.shape(adata.X))))
+
+            # Independent Doublet Detection
+            clf = doubletdetection.BoostClassifier()
+            # raw_counts is a cells by genes count matrix
+            labels = clf.fit(adata.X).predict(voter_thresh=0.50)
+            f2, tsne_coords, clusters = doubletdetection.plot.tsne(adata.X, labels, random_state=1,
+                                                                   save='immvar_tsne_test.pdf', show=False)
+            logging.info(str(labels))
+            nan_index = np.isnan(labels)
+            labels[nan_index] = 1
+            logging.info(str('Number of Doublets: ' + str(np.sum(labels))))
+            labels = labels - 1
+            logging.info(str(labels))
+            labels = np.abs(labels) > 0
+            logging.info(str(labels))
+            adata = adata[labels]
+            logging.info(str('Data structure details: ' + str(adata)))
+            f = doubletdetection.plot.convergence(clf, save='immvar_convergence_test.pdf', show=False)
+        else:
+            bdata = sc.read_10x_h5(paths[ii], 'hg19')
+            bdata = bdata[bdata.obs_names.isin(singlets_bc)]
+            logging.info(str(bdata))
+            singlets_bc = pd.Series(singlets_bc)
+            singlets_ind = pd.Series(singlets_ind)
+            singlets_ind = singlets_ind[singlets_bc.isin(bdata.obs_names.tolist()).values]
+            bdata.obs['ind_cov'] = singlets_ind.values
+            bdata.obs['well'] = np.repeat(gps[ii], len(bdata.obs_names))
+            bdata.obs['batch_cov'] = np.repeat(gps[ii][:-2], len(bdata.obs_names))
+
+            # Independent Doublet Detection
+            clf = doubletdetection.BoostClassifier()
+            # raw_counts is a cells by genes count matrix
+            labels = clf.fit(bdata.X).predict(voter_thresh=0.50)
+            logging.info(str(labels))
+            nan_index = np.isnan(labels)
+            labels[nan_index] = 1
+            logging.info(str('Number of Doublets: ' + str(np.sum(labels))))
+            labels = labels - 1
+            logging.info(str(labels))
+            labels = np.abs(labels) > 0
+            logging.info(str(labels))
+            bdata = bdata[labels]
+            logging.info(str('Data structure details: ' + str(bdata)))
+            # Concatenate files.
+            adata = adata.concatenate(bdata)
+
+    logging.info(str(adata))
+    logging.info('Saving compiled demuxlet results')
+    adata.write(savepath)
+
 
 def combine_studies(crossXpath, flarepath, savepath):
     import scanpy.api as sc
@@ -311,7 +403,87 @@ def combine_studies(crossXpath, flarepath, savepath):
     adata.obs['disease_cov_simple'][adata.obs['disease_cov_simple'].isin(['sle', 'Treated', 'Treated Pair'])] = 'sle_treated'
     adata.obs['disease_cov_simple'][adata.obs['disease_cov_simple'].isin(['Untreated', 'Untreated Pair'])] = 'sle_flaring'
     logging.info(str('New combined structure details: ' + str(adata)))
-    adata.filename = 'combinedbacked.h5ad'
+    adata.write(savepath)
+
+
+def clean_anndata(filepath, clean, keep):
+    import numpy as np
+    import scanpy.api as sc
+    """Deletes attributes not needed.
+    adapted from scvelo.pp.cleanup
+    Copyright (c) 2018, Theis Lab
+    All rights reserved.
+    Arguments
+    ---------
+    data: :class:`~anndata.AnnData`
+        Annotated data matrix.
+    clean: `str` or list of `str` (default: `layers`)
+        Which attributes to consider for freeing memory.
+    keep: `str` or list of `str` (default: `['spliced', unspliced']`)
+        Which attributes to keep.
+    Returns
+    -------
+    Returns or updates `adata` with selection of attributes kept.
+    """
+    adata = sc.read(filepath)
+    logging.info(str('Structure details: ' + str(adata)))
+    logging.info(np.unique(adata.obs['well'].tolist()))
+    logging.info(np.unique(adata.obs['batch_cov'].tolist()))
+    logging.info(np.unique(adata.obs['ind_cov'].tolist()))
+    logging.info(np.unique(adata.obs['pop_cov'].tolist()))
+
+    if any(['obs' in clean, 'all' in clean]):
+        for key in list(adata.obs.keys()):
+            if key not in keep: del adata.obs[key]
+
+    if any(['var' in clean, 'all' in clean]):
+        for key in list(adata.var.keys()):
+            if key not in keep: del adata.var[key]
+
+    if any(['uns' in clean, 'all' in clean]):
+        for key in list(adata.uns.keys()):
+            if key not in keep: del adata.uns[key]
+
+    if any(['layers' in clean, 'all' in clean]):
+        for key in list(adata.layers.keys()):  # remove layers that are not needed
+            if key not in keep: del adata.layers[key]
+    logging.info(str('Structure details: ' + str(adata)))
+    adata.write(filepath)
+
+
+def combine_CLUES_Immvar(crossXpath, immvarpath, savepath):
+    import scanpy.api as sc
+    import logging
+    import numpy as np
+    adatacrossX = sc.read(crossXpath)
+    adatacrossX.obs['study_cov'] = adatacrossX.obs['batch_cov'].astype('object')
+    adatacrossX.obs['study_cov'] = 'CLUES'
+    logging.info(str('CrossX structure details: ' + str(adatacrossX)))
+    adataimmvar = sc.read(immvarpath)
+    adataimmvar.obs['study_cov'] = adataimmvar.obs['batch_cov'].astype('object')
+    adataimmvar.obs['disease_cov'] = adataimmvar.obs['batch_cov'].astype('object')
+    adataimmvar.obs['pop_cov'] = 'WHITE'
+    adataimmvar.obs['study_cov'] = 'ImmVar'
+    adataimmvar.obs['disease_cov'] = 'healthy'
+    logging.info(str('ImmVar structure details: ' + str(adataimmvar)))
+    adata = adatacrossX.concatenate(adataimmvar)
+    adata.obs['disease_cov_simple'] = adata.obs['disease_cov'].astype('object')
+    adata.obs['disease_cov_simple'][adata.obs['disease_cov_simple'].isin(['healthy', 'ImmVar', 'UCSF Control', 'UCSF Healthy'])] = 'healthy'
+    adata.obs['disease_cov_simple'][adata.obs['disease_cov_simple'].isin(['sle', 'Treated', 'Treated Pair'])] = 'sle_treated'
+    adata.obs['disease_cov_simple'][adata.obs['disease_cov_simple'].isin(['Untreated', 'Untreated Pair'])] = 'sle_flaring'
+    # Reduce floating point accuracy for space saving.
+    adata.X = adata.X.astype(np.float16, copy=False)
+    logging.info(str('New combined structure details: ' + str(adata)))
+    logging.info(np.unique(adata.obs['well'].tolist()))
+    logging.info(np.unique(adata.obs['batch_cov'].tolist()))
+    logging.info(np.unique(adata.obs['ind_cov'].tolist()))
+    logging.info(np.unique(adata.obs['pop_cov'].tolist()))
+    logging.info(str('Remove variable annotations'))
+    for key in list(adata.var.keys()):
+        del adata.var[key]
+    logging.info(str('Remove redundant batch observation'))
+    del adata.obs['batch']
+    logging.info(str('New combined structure details: ' + str(adata)))
     adata.write(savepath)
 
 
@@ -357,7 +529,7 @@ def basic_processing(filepath, savepath):
     # Basic processing #
     ####################
     adata = sc.read(filepath)
-    adata.obs['batchcore'] = adata.obs['batch_cov'].astype('category')
+    adata.obs['well'] = adata.obs['well'].astype('category')
     adata.var_names_make_unique()
     logging.info(str('Data structure details: ' + str(adata)))
     # Extract list of genes
@@ -381,8 +553,8 @@ def basic_processing(filepath, savepath):
     logging.info(str('Data structure details: ' + str(adata)))
     sc.pp.filter_cells(adata, max_genes=2500)
     logging.info(str('Data structure details: ' + str(adata)))
-    logging.info('Saving raw and raw counts')
-    adata.uns['raw_counts'] = adata.X
+    logging.info('Saving raw')
+    #adata.uns['raw_counts'] = adata.X
     adata.raw = sc.pp.log1p(adata, copy=True)
     logging.info('Normalizing total counts to 10,000')
     sc.pp.normalize_per_cell(adata, counts_per_cell_after=1e4)
@@ -395,7 +567,7 @@ def basic_processing(filepath, savepath):
     logging.info('Regressing out variance within total nUMIs and % mitochondrial UMIs')
     sc.pp.regress_out(adata, ['n_counts', 'percent_mito'])
     logging.info('Batch correcting by regressing out batch variance')
-    sc.pp.regress_out(adata, ['batchcore'])
+    sc.pp.regress_out(adata, ['well'])
     logging.info('Scaling expression data')
     sc.pp.scale(adata, max_value=10)
     logging.info(str('Data structure details: ' + str(adata)))
@@ -427,16 +599,23 @@ def basicprocessing_noplatelets(filepath, savepath):
     # Basic processing #
     ####################
     adata = sc.read(filepath)
-    adata.obs['batchcore'] = adata.obs['batch_cov'].astype('category')
+    adata.obs['well'] = adata.obs['well'].astype('category')
     adata.var_names_make_unique()
     logging.info(str('Data structure details: ' + str(adata)))
     logging.info('Removing platelet contamination and Megakaryocytes.')
     mat = csr_matrix(adata.X)
     mat = mat[:, adata.var_names.isin(['PF4', 'PPBP', 'SDPR', 'GNG11'])].todense()
+    # Regress out platelet signature by allocating genes as observations
+    #logging.info(str('PPBP: ' + str(np.asarray(mat[:, 0], dtype=int))))
+    #adata.obs['PPBP'] = np.asarray(mat[:, 0], dtype=int)
+    #adata.obs['PF4'] = np.asarray(mat[:, 1], dtype=int)
+    #adata.obs['SDPR'] = np.asarray(mat[:, 2], dtype=int)
+    #adata.obs['GNG11'] = np.asarray(mat[:, 3], dtype=int)
+    # Sum across genes
     mat = np.sum(mat, axis=1)
     logging.info(str(np.shape(mat)))
     # Remove platelet contaminated cells from processing.
-    adata = adata[np.ravel(mat <= 0)]
+    adata = adata[np.ravel(mat <= 2) | np.ravel(mat >= 25)]
     logging.info(str('Data structure details: ' + str(adata)))
     logging.info('Removing Erythrocytes.')
     mat = csr_matrix(adata.X)
@@ -464,6 +643,69 @@ def basicprocessing_noplatelets(filepath, savepath):
     logging.info(str('Data structure details: ' + str(adata)))
     sc.pp.filter_cells(adata, max_genes=2500)
     logging.info(str('Data structure details: ' + str(adata)))
+    logging.info('Saving raw')
+    #adata.uns['raw_counts'] = adata.X
+    adata.raw = sc.pp.log1p(adata, copy=True)
+    logging.info('Normalizing total counts to 10,000')
+    sc.pp.normalize_per_cell(adata, counts_per_cell_after=1e4)
+    logging.info('Filtering genes')
+    filter_result = sc.pp.filter_genes_dispersion(adata.X, log=True)
+    adata = adata[:, filter_result.gene_subset]
+    logging.info('Log transforming data')
+    sc.pp.log1p(adata)
+    logging.info(str('Data structure details: ' + str(adata)))
+    logging.info('Regressing out variance within total nUMIs and % mitochondrial UMIs')
+    sc.pp.regress_out(adata, ['n_counts', 'percent_mito'])
+    logging.info('Batch correcting by regressing out batch variance')
+    sc.pp.regress_out(adata, ['well'])
+    # Regress out platelet signature
+    #logging.info('Regressing out platelet signature')
+    #sc.pp.regress_out(adata, ['PF4', 'PPBP', 'SDPR', 'GNG11'])
+    logging.info('Scaling expression data')
+    sc.pp.scale(adata, max_value=10)
+    logging.info(str('Data structure details: ' + str(adata)))
+    # Unique list of individuals
+    people = np.unique(adata.obs['ind_cov'].values.tolist())
+    # Allocate space for total PMBCs per individual.
+    total_pbmcs = dict.fromkeys(people)
+    for p in people:
+        total_pbmcs[p] = len(adata.obs_names[adata.obs['ind_cov'] == p])
+    adata.uns['total_pbmcs'] = total_pbmcs
+    logging.info('Saving processed data')
+    adata.write(savepath)
+
+
+def basic_processing_rnavelocity(filepath, savepath):
+    import numpy as np
+    import scanpy.api as sc
+    import logging
+
+    ##################
+    # Configure file #
+    ##################
+    sc.settings.verbosity = 2
+    sc.settings.autoshow = False
+    logging.basicConfig(level=logging.INFO)
+
+    ####################
+    # Basic processing #
+    ####################
+    adata = sc.read(filepath)
+    adata.obs['batchcore'] = adata.obs['batchcore'].astype('category')
+    adata.var_names_make_unique()
+    logging.info(str('Data structure details: ' + str(adata)))
+    # Extract list of genes
+    genelist = adata.var_names.tolist()
+    # Find mitochondrial genes
+    mito_genes_names = [gn for gn in genelist if gn.startswith('MT-')]
+    logging.info(str('Mito genes: ' + str(mito_genes_names)))
+    # Find indices of mitochondrial genes
+    mito_genes = [genelist.index(gn) for gn in mito_genes_names]
+    # For each cell compute fraction of counts in mito genes vs. all genes
+    adata.obs['percent_mito'] = np.ravel(np.sum(adata[:, mito_genes].X, axis=1)) / np.ravel(np.sum(adata.X, axis=1))
+    # Add the total counts per cell as observations-annotation to adata
+    adata.obs['n_counts'] = np.ravel(adata.X.sum(axis=1))
+    logging.info(str('Data structure details: ' + str(adata)))
     logging.info('Saving raw and raw counts')
     adata.uns['raw_counts'] = adata.X
     adata.raw = sc.pp.log1p(adata, copy=True)
@@ -490,6 +732,79 @@ def basicprocessing_noplatelets(filepath, savepath):
         total_pbmcs[p] = len(adata.obs_names[adata.obs['ind_cov'] == p])
     adata.uns['total_pbmcs'] = total_pbmcs
     logging.info('Saving processed data')
+    adata.write(savepath)
+
+
+def add_covariates_2_rnavelocity(loompath, refh5adpath, savepath):
+    import numpy as np
+    import scanpy.api as sc
+    import logging
+    import scvelo as scv
+    import pandas as pd
+
+    ##################
+    # Configure file #
+    ##################
+    sc.settings.verbosity = 2
+    sc.settings.autoshow = False
+    logging.basicConfig(level=logging.INFO)
+
+    adata = scv.read(loompath)
+    logging.info(str('loom data structure details: ' + str(adata)))
+    rnavelobarcodes = adata.obs_names.tolist()
+    batch = []
+    BARCODES = []
+    for barcode in rnavelobarcodes:
+        tmp = barcode.split(':')[0]
+        if tmp[:5] != 'YE110':
+            tmp = tmp.replace('-', '_', 1)
+        batch.append(tmp)
+        newbarcode = barcode.split(':')[1]
+        newbarcode = newbarcode[:-1]
+        BARCODES.append(newbarcode)
+    adata.obs['barcodes'] = BARCODES
+    adata.obs['batchcore'] = batch
+    logging.info(str('Updated data structure details: ' + str(adata)))
+
+    refadata = sc.read(refh5adpath, cache=True)
+    logging.info(str('Reference data structure details: ' + str(refadata)))
+
+    DZ = []
+    IND = []
+    WELL = []
+    CT = []
+    LOUVAIN = []
+    for ii in range(len(BARCODES)):
+        #logging.info(str('ii: ' + str(ii)))
+        #logging.info(str('batch: ' + str(batch[ii])))
+        refbarcodes = refadata.obs['well'][refadata.obs['well']==batch[ii]].index.tolist()
+
+        for jj in range(len(refbarcodes)):
+            refbarcodes[jj] = refbarcodes[jj].split('-')[0]
+
+        dz = refadata.obs['disease_cov'][refadata.obs['well']==batch[ii]].values.tolist()
+        ind = refadata.obs['ind_cov'][refadata.obs['well']==batch[ii]].values.tolist()
+        well = refadata.obs['well'][refadata.obs['well']==batch[ii]].values.tolist()
+        ct = refadata.obs['ct_cov'][refadata.obs['well']==batch[ii]].values.tolist()
+        louvain = refadata.obs['louvain'][refadata.obs['well']==batch[ii]].values.tolist()
+
+        #logging.info(str('barcode: ' + str(BARCODES[ii])))
+        #logging.info(str('barcode: ' + str(refbarcodes.index(BARCODES[ii]))))
+        #logging.info(str('barcode: ' + str(dz[refbarcodes.index(BARCODES[ii])])))
+
+        DZ.append(dz[refbarcodes.index(BARCODES[ii])])
+        IND.append(ind[refbarcodes.index(BARCODES[ii])])
+        WELL.append(well[refbarcodes.index(BARCODES[ii])])
+        CT.append(ct[refbarcodes.index(BARCODES[ii])])
+        LOUVAIN.append(louvain[refbarcodes.index(BARCODES[ii])])
+
+    adata.obs['disease_cov'] = DZ
+    adata.obs['ind_cov'] = IND
+    adata.obs['ct_cov'] = CT
+    adata.obs['well'] = WELL
+    adata.obs['louvain'] = LOUVAIN
+    logging.info(str('Updated data structure details: ' + str(adata)))
+    logging.info(str('Saving...'))
     adata.write(savepath)
 
 
@@ -563,8 +878,8 @@ def basic_analysis(filepath):
     logging.info('PCA complete.')
     sc.pp.neighbors(adata)
     logging.info('KNN complete.')
-    sc.tl.diffmap(adata)
-    logging.info('diffmap complete.')
+    #sc.tl.diffmap(adata)
+    #logging.info('diffmap complete.')
     sc.tl.louvain(adata, random_state=intialization, resolution=resolution)
     logging.info('Louvain complete.')
     sc.tl.paga(adata)
@@ -572,11 +887,11 @@ def basic_analysis(filepath):
     logging.info('paga complete.')
     sc.tl.umap(adata, random_state=intialization, init_pos='paga')
     logging.info('UMAP complete.')
-    sc.tl.tsne(adata, n_pcs=10)
-    logging.info('TSNE complete.')
+    #sc.tl.tsne(adata, n_pcs=10)
+    #logging.info('TSNE complete.')
     # First PC for ordering of cells in the umap
-    adata.obs['ordering_UMAP'] = sc.pp.pca(adata.obsm['X_umap'], n_comps=1, copy=True)
-    logging.info('UMAP ordering complete.')
+    #adata.obs['ordering_UMAP'] = sc.pp.pca(adata.obsm['X_umap'], n_comps=1, copy=True)
+    #logging.info('UMAP ordering complete.')
     #sc.tl.rank_genes_groups(adata, groupby='louvain', method='wilcoxon')
     #logging.info('Processing PHATE')
     #sc.tl.phate(adata, n_pca=10)
@@ -627,7 +942,7 @@ def subpopulation_analysis(cell_type_IDs, filepath, no_norm_filepath, savepath):
     logging.info(str('New data structure details: ' + str(adata)))
     bdata = adata[adata.obs['ct_cov'].isin(cell_type_IDs)].copy(savepath)
     logging.info(str('ct_cov: ' + str(bdata.obs['ct_cov'])))
-    logging.info(str('bdata structure details: ' + str(adata)))
+    logging.info(str('bdata structure details: ' + str(bdata)))
     bdata.write(savepath)
 
     ######################
